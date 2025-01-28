@@ -1,0 +1,1010 @@
+---
+title: "Trabajo anomalías"
+output: 
+  pdf_document:
+    toc: true          # Activa la tabla de contenidos
+    number_sections: true  # Numera los títulos
+    toc_depth: 6       # Nivel de profundidad de la TOC (1= solo títulos, 2= incluye subtítulos, etc.)
+date: "2024-12-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r echo=FALSE, include=FALSE}
+options(repos = c(CRAN = "https://cran.r-project.org"))
+source("Outliers/OutliersPaquetes.R")
+source("Outliers/OutliersLibrerias.R")
+source("Outliers/OutliersFunciones_byCubero.R")
+```
+
+
+
+# Dataset y Selección de Variables
+
+***NOTA:*** *He incluido algunas celdas de código ya resuelto porque creo que dichos resultados son relevantes para entender el contexto del problema. Las celdas que se pedía completar están indicadas mediante el comentario "`# COMPLETAR`".*
+
+En esta práctica usaremos el conjunto de datos del cáncer de mama (breast cancer dataset), descargado de https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/OPQMVF, que contiene información sobre varias características calculadas a partir de imágenes digitales de mamas. Describimos aquí las columnas que serán el objetivo de nuestro estudio:
+
+**Variables relativas a las características de las células**
+
+- **radius_mean**: Radio medio de las células (promedio de las distancias desde el centro hasta los puntos del perímetro).
+- **texture_mean**: Variación estándar de los valores de intensidad en la imagen.
+- **perimeter_mean**: Perímetro medio de las células.
+- **area_mean**: Área media de las células.
+- **smoothness_mean**: Suavidad media, calculada como la variación local en la longitud del radio.
+- **compactness_mean**: Compacidad media, calculada como \((perímetro^2) / área - 1.0\).
+- **concavity_mean**: Media de las concavidades (profundidades de las zonas cóncavas en el contorno).
+- **concave_points_mean**: Media de los puntos cóncavos en el contorno.
+- **symmetry_mean**: Media de la simetría.
+- **fractal_dimension_mean**: Media de la dimensión fractal (aproximación de la "complejidad" del contorno).
+
+**Variables relativas a los errores estándar**
+
+- **radius_se**: Error estándar del radio.
+- **texture_se**: Error estándar de la textura.
+- **perimeter_se**: Error estándar del perímetro.
+- **area_se**: Error estándar del área.
+- **smoothness_se**: Error estándar de la suavidad.
+- **compactness_se**: Error estándar de la compacidad.
+- **concavity_se**: Error estándar de las concavidades.
+- **concave_points_se**: Error estándar de los puntos cóncavos.
+- **symmetry_se**: Error estándar de la simetría.
+- **fractal_dimension_se**: Error estándar de la dimensión fractal.
+
+**Variables relativas a los peores valores**
+
+- **radius_worst**: Valor más alto del radio.
+- **texture_worst**: Valor más alto de la textura.
+- **perimeter_worst**: Valor más alto del perímetro.
+- **area_worst**: Valor más alto del área.
+- **smoothness_worst**: Valor más alto de la suavidad.
+- **compactness_worst**: Valor más alto de la compacidad.
+- **concavity_worst**: Valor más alto de las concavidades.
+- **concave_points_worst**: Valor más alto de los puntos cóncavos.
+- **symmetry_worst**: Valor más alto de la simetría.
+- **fractal_dimension_worst**: Valor más alto de la dimensión fractal.
+
+**Variable de clasificación**
+
+- **Class**: Clasificación del diagnóstico. Los posibles valores son:
+  - `"o"`: outlier.
+  - `"n"`: normal.
+
+Este conjunto de datos permite analizar las diferencias entre tumores malignos y benignos. Utilizando 31 características tanto físicas como geométricas de las células mamarias, podemos hallar las instancias fuera de lo normal (outliers) y las clasificaremos como tumores malignos.
+
+Empezamos cargando el conjunto de datos:
+```{r}
+datos <- read.csv("breast-cancer-unsupervised-ad.csv", comment.char="@", header = FALSE)
+
+#Asignamos manualmente los nombres de los atributos
+names(datos) <- c("radius_mean", 
+                  "texture_mean", 
+                  "perimeter_mean", 
+                  "area_mean", 
+                  "smoothness_mean", 
+                  "compactness_mean", 
+                  "concavity_mean", 
+                  "concave_points_mean", 
+                  "symmetry_mean", 
+                  "fractal_dimension_mean", 
+                  "radius_se", 
+                  "texture_se", 
+                  "perimeter_se", 
+                  "area_se", 
+                  "smoothness_se", 
+                  "compactness_se", 
+                  "concavity_se", 
+                  "concave_points_se", 
+                  "symmetry_se", 
+                  "fractal_dimension_se", 
+                  "radius_worst", 
+                  "texture_worst", 
+                  "perimeter_worst", 
+                  "area_worst", 
+                  "smoothness_worst", 
+                  "compactness_worst", 
+                  "concavity_worst", 
+                  "concave_points_worst", 
+                  "symmetry_worst", 
+                  "fractal_dimension_worst",
+                  "Class")
+
+head(datos)
+
+```
+Observamos que en este dataset, el atributo de la **clase** toma los valores 'o' y 'n', que corresponde al diagnóstico. Basándonos en el contexto del dataset de breast cancer, esto podría significar lo siguiente:
+
+- 'o' probablemente indica "outlier", que podría ser equivalente a "maligno" (outlier en el sentido de un crecimiento anormal de células que podría llevar al cáncer maligno).
+- 'n' probablemente indica "normal", lo que podría referirse a un diagnóstico "benigno".
+
+También podría ser que 'o' y 'n' se refieran únicamente a outlier y normal, en el sentido de que los outliers son datos que toman valores muy extremos, independientemente de si representan un tumor maligno o benigno.
+
+Creamos un dataframe con solo las variables numéricas (omitimos el atributo Class porque queremos detectar los outliers nosotros). Partimos entonces de 30 columnas.
+
+```{r}
+columnas.num = sapply(c(1:ncol(datos)) , function(x) is.numeric(datos[, x]))
+datos.num = datos[, columnas.num]
+head(datos.num)
+```
+Eliminamos columnas con pocos valores distintos pues consideramos que no tienen valores anómalos. Para ello, eliminamos las columnas con menos de 10 valores distintos. 
+
+```{r}
+# Identificamos columnas con pocos valores distintos
+valores.unicos <- sapply(datos.num, function(col) length(unique(col)))
+
+# Mostrar columnas con pocos valores distintos
+pocas.distintas <- names(valores.unicos[valores.unicos < 10])
+print(paste("Columnas con pocos valores distintos:", paste(pocas.distintas, collapse = ", ")))
+
+# Eliminar columnas con pocos valores distintos
+datos.num <- datos.num[, !(names(datos.num) %in% pocas.distintas)]
+
+# Verificar el nuevo dataset
+head(datos.num)
+
+```
+Observamos que no se han eliminado columnas pues todas tienen alta variabilidad de los datos (todas toman valores reales continuos).
+
+Eliminamos filas con valores nulos:
+
+
+```{r}
+datos.num = na.omit(datos.num)
+
+# Confirmamos que no hay valores nulos
+print(sum(is.na(datos.num)))  # Debería devolver 0
+```
+Vamos a realizar una **reducción de dimensionalidad** temprana con el fin de no encontrar problemas en el futuro al intentar interpretar los gráficos, debido al alto número de variables. Para ello, vamos a eliminar variables que estén muy correladas entre sí. Por tanto, vamos a representar un **biplot** de las variables y las que sigan la misma dirección (mismo sentido o sentido inverso), estarán correladas:
+```{r}
+biplot.outliers.IQR = biplot_2_colores(scale(datos.num), 
+                                       titulo.grupo.a.mostrar = "Outliers IQR",
+                                       titulo ="Biplot Outliers IQR")
+biplot.outliers.IQR
+```
+Las siguientes variables tienen una alta correlación positiva:
+
+- `concave_points_worst`, `concave_points_mean`, `concave_points_se`.
+- `compactness_mean`, `compactness_worst`, `compactness_se`.
+- `texture_mean`, `texture_worst`, `texture_se`.
+- `radius_mean`, `radius_worst`, `radius_se`, `perimeter_mean`, `perimeter_worst`, `perimeter_se`, `area_mean`, `area_se`, `area_worst`.
+- `symmetry_mean`, `symmetry_worst`, `symmetry_se`.
+- `smoothness_mean`, `smoothness_worst`, `smoothness_se`.
+- `concavity_mean`, `concavity_worst`, `concavity_se`.
+- `fractal_dimension_mean`, `fractal_dimension_se`, `fractal_dimension_worst`.
+
+Por tanto, estas variables parecen ser redundantes entre sí pues contienen información muy similar. Vamos a seleccionar una variable representativa de cada grupo para mejorar la interpretabilidad. 
+
+Para ello, primero vamos a representar **diagramas de dispersión** de cada grupo:
+
+```{r}
+# Grupos de variables correlacionadas
+grupos <- list(
+  c("concave_points_worst", "concave_points_mean", "concave_points_se"),
+  c("compactness_mean", "compactness_worst", "compactness_se"),
+  c("texture_mean", "texture_worst", "texture_se"),
+  c("radius_mean", "radius_worst", "perimeter_mean", "area_mean", "radius_se", "perimeter_se", "area_se", "perimeter_worst", "area_worst"),
+  c("symmetry_mean", "symmetry_worst", "symmetry_se"),
+  c("smoothness_mean", "smoothness_worst", "smoothness_se"),
+  c("concavity_mean", "concavity_worst", "concavity_se"),
+  c("fractal_dimension_mean", "fractal_dimension_se", "fractal_dimension_worst")
+)
+
+# Generar los pares para cada grupo
+for (grupo in grupos) {
+  pairs(datos.num[, grupo], 
+        pch = 19, cex = 0.5, lower.panel = NULL)
+}
+```
+Tras observar los diagramas de dispersión, he elegido eliminar las siguientes variables:
+
+- `concave_points_worst`, `concave_points_se`
+- `compactness_worst`, `compactness_se`
+- `texture_worst`, `texture_se`.
+- `radius_worst`, `perimeter_mean`, `area_mean`, `perimeter_se`, `area_se`, `perimeter_worst`, `area_worst`.
+- `symmetry_worst`, `symmetry_se`
+- `smoothness_worst`
+- `concavity_worst`
+- `fractal_dimension_worst`, `fractal_dimension_se`
+
+Eliminamos las columnas elegidas: 
+```{r}
+columnas.a.quitar <- c(
+  "concave_points_worst", "concave_points_se",
+  "compactness_worst", "compactness_se",
+  "texture_worst", "texture_se",
+  "radius_worst", "perimeter_mean", "area_mean", "perimeter_se", "area_se", "perimeter_worst", "area_worst", 
+  "symmetry_worst", "symmetry_se",
+  "smoothness_worst",
+  "concavity_worst",
+  "fractal_dimension_worst", "fractal_dimension_se"
+)
+
+# Eliminar las columnas seleccionadas
+datos.num <- datos.num[, !(colnames(datos.num) %in% columnas.a.quitar)]
+head(datos.num)
+```
+Mostramos el biplot de las variables restantes:
+```{r}
+biplot.outliers.IQR = biplot_2_colores(datos.num, 
+                                       titulo.grupo.a.mostrar = "Outliers IQR",
+                                       titulo ="Biplot Outliers IQR")
+biplot.outliers.IQR
+```
+
+# Detección de outliers en una dimensión
+
+## Outliers IQR
+Observamos el histograma de cada variable para ver que los datos no sigan distribuciones raras (picos o forma de U).
+
+```{r}
+# COMPLETAR
+par(mfrow = c(2,3))
+columnas.num = sapply(c(1:ncol(datos.num)) , function(x) hist(datos.num[,names(datos.num)[x]], main="", xlab=names(datos.num)[x]))
+```
+Variables como `concavity_se` tienen muchas observaciones cercanas a cero, lo que puede generar dudas sobre la normalidad o incluso la relevancia de estas variables. Como disponemos de muchas columnas, vamos a eliminar esta columna con histograma muy desplazado a la izquierda.
+
+```{r}
+columnas.a.quitar <- c("concavity_se")
+
+datos.num <- datos.num[, !(colnames(datos.num) %in% columnas.a.quitar)]
+head(datos.num)
+```
+
+Seleccionamos la primera columna (`radius_mean`):
+```{r}
+indice.columna = 1
+columna        = datos.num[, indice.columna]
+nombre.columna = names(datos.num) [indice.columna]
+```
+
+### Obtención de los outliers IQR
+
+Calculamos el iqr:
+```{r}
+# COMPLETAR
+cuartil.primero= quantile(columna, 0.25)
+cuartil.tercero = quantile(columna, 0.75)
+iqr= cuartil.tercero - cuartil.primero
+```
+
+Calculamos los extremos que delimitan los outliers:
+
+```{r}
+# COMPLETAR
+extremo.superior.outlier.IQR= cuartil.tercero + 1.5*iqr
+extremo.inferior.outlier.IQR= cuartil.primero - 1.5*iqr
+extremo.superior.outlier.IQR.extremo= cuartil.tercero + 3*iqr
+extremo.inferior.outlier.IQR.extremo= cuartil.primero - 3*iqr
+```
+
+Identificamos los outliers IQR
+```{r}
+# COMPLETAR
+son.outliers.IQR <- columna<extremo.inferior.outlier.IQR | columna>extremo.superior.outlier.IQR
+son.outliers.IQR.extremos <- columna<extremo.inferior.outlier.IQR.extremo | columna>extremo.superior.outlier.IQR.extremo
+```
+
+### Índices y valores de los outliers IQR
+
+Obtenemos los índices de las filas que contienen un outlier en la columna seleccionada, así como el valor correspondiente en dicha columna.
+```{r}
+# COMPLETAR
+claves.outliers.IQR <- which(son.outliers.IQR==TRUE)
+df.outliers.IQR <- datos.num[claves.outliers.IQR,]
+nombres.outliers.IQR <- row.names(df.outliers.IQR)
+valores.outliers.IQR <- df.outliers.IQR[, indice.columna]
+
+claves.outliers.IQR.extremos <- which(son.outliers.IQR.extremos==TRUE)
+df.outliers.IQR.extremos <- datos.num[claves.outliers.IQR.extremos,]
+nombres.outliers.IQR.extremos <- row.names(df.outliers.IQR.extremos)
+valores.outliers.IQR.extremos <- df.outliers.IQR.extremos[, indice.columna]
+```
+
+```{r}
+claves.outliers.IQR
+
+df.outliers.IQR
+
+nombres.outliers.IQR
+
+valores.outliers.IQR
+```
+```{r}
+claves.outliers.IQR.extremos
+
+df.outliers.IQR.extremos
+
+nombres.outliers.IQR.extremos
+
+valores.outliers.IQR.extremos
+```
+Observamos que se detectan **7 outliers normales** (instancias 1,2,3,5,7,46,310) y solo **1 outlier extremo** (instancia 2) según el método IQR.  
+
+### Cómputo de los outliers IQR con funciones
+
+Usamos las funciones proporcionadas en `OutliersFunciones_byCubero.R.`
+
+```{r}
+son.outliers.IQR     = son_outliers_IQR (datos.num, indice.columna)
+head(son.outliers.IQR)
+
+claves.outliers.IQR  = claves_outliers_IQR (datos.num, indice.columna)
+claves.outliers.IQR
+
+son.outliers.IQR.extremos    = son_outliers_IQR (datos.num, indice.columna, 3)
+head(son.outliers.IQR.extremos)
+
+claves.outliers.IQR.extremos = claves_outliers_IQR (datos.num, indice.columna, 3)
+claves.outliers.IQR.extremos
+```
+### Desviación de los outliers con respecto a la media de la columna
+
+Se ve claramente que los datos se encuentran en distintas escalas, por lo que normalizamos los datos con el método z-score, mediante la función `scale`:
+
+```{r}
+datos.num.zscore = scale(datos.num)
+head(datos.num.zscore)
+
+#Seleccionamos nuestra columna elegida:
+columna.norm   = datos.num.zscore[, indice.columna]
+```
+Se supone que las instancias deberían tomar valores normales (entre -2 y 2) en todas o casi todas las variables. Sin embargo, esto no ocurre aquí porque estamos mostrando las 6 primeras instancias (head), que casualmente son los outliers del dataset. Por eso vamos a mostrar otras instancias random del dataset: 
+```{r}
+datos.num.zscore[200:205,]
+```
+En efecto, aquí sí se cumple que se toman valores entre -2 y 2 para todas las variables.
+
+Mostramos los valores normalizados de los outliers:
+```{r}
+# COMPLETAR
+valores.outliers.IQR.norm <- columna.norm[son.outliers.IQR]
+valores.outliers.IQR.norm
+```
+Al haber normalizado, un valor de 2.94 o 4.26 nos dice directamente que es un valor inusual. 
+
+Mostramos los valores en todas las columnas de los outliers detectados (según la columna 1):
+```{r}
+# COMPLETAR
+datos.num.zscore.outliers.IQR <- datos.num.zscore[son.outliers.IQR, ]
+datos.num.zscore.outliers.IQR
+```
+Observamos fácilmente que además de en la primera columna, los outliers tienen valores extremos en otras columnas.
+
+### Gráfico
+Mostramos los valores y los outliers de la columna 1 (ya normalizada):
+```{r}
+# COMPLETAR
+plot_2_colores(columna.norm, claves.outliers.IQR, nombre.columna)
+```
+Vemos que hay 5 outliers que están muy claros (casualmente corresponde con las instancias numero 1,2,3,5 y 7), pues se encuentran todos juntos en una región aislada.
+
+Representamos los outliers extremos:
+```{r}
+# COMPLETAR
+plot_2_colores(columna.norm, claves.outliers.IQR.extremos, nombre.columna)
+```
+Solo hay un outlier extremo (instancia 2), que es el más alejado de los datos de la columna `radius_mean``.
+
+### Diagramas de cajas
+
+Boxplot donde mostramos los outliers con puntos rojos:
+```{r}
+# COMPLETAR
+diag_caja_outliers_IQR(datos.num.zscore, nombre.columna)
+```
+Se ven 6 outliers por arriba (valores extremos superiores)  y 1 outlier por debajo (valor extremo inferior).
+
+Para mostrar las etiquetas de los outliers (en este caso, las etiquetas serán el número de instancia):
+```{r}
+# COMPLETAR
+diag_caja(datos.num.zscore, nombre.columna, claves.outliers.IQR)
+```
+
+Vemos los valores que una instancia outlier toma en las otras columnas: 
+```{r}
+# COMPLETAR
+diag_cajas <- diag_caja_juntos(datos.num.zscore, titulo = "Outliers en alguna columna", claves.outliers.IQR)
+diag_cajas + theme(axis.text.x = element_text(angle = 45, hjust = 1)) #Ponemos los nombres inclinados para que no se superpongan
+```
+Vemos que, por ejemplo, la instancia 1 no solo toma un valor anormal (alto) en la columna 1, sino en la mayoría de columnas. Lo mismo ocurre con las instancias 3 y 5, e incluso con la 2. Con la instancia 46 ocurre también pero para valores muy bajos.
+
+## Test de hipótesis (opcional)
+### Test de Grubbs
+Suponemos H0:El valor más alejado de la media NO es un outlier.
+```{r}
+test.Grubbs = grubbs.test(columna, two.sided = TRUE)
+test.Grubbs$p.value
+```
+El p-value es < 0.005, por lo que el test rechaza la hipótesis nula. Así pues, podemos concluir que el valor más alejado de la media (creo que era la instancia 2) es un outlier desde el punto de vista estadístico.
+
+Para obtener el valor que toma el outlier:
+```{r}
+valor.posible.outlier = outlier(columna)
+valor.posible.outlier
+```
+Clave del posible outlier:
+```{r}
+es.posible.outlier = outlier(columna, logical = TRUE)
+clave.posible.outlier = which(es.posible.outlier == TRUE)
+clave.posible.outlier
+```
+Por tanto la instancia 2 es un outlier (siempre y cuando se cumpla la condición de normalidad, que veremos ahora).
+
+### Comprobación de la hipótesis de Normalidad
+Para aplicar el test hay que garantizar que se cumple la **condición de normalidad**. La hipótesis de normalidad se aplica sobre el dataset sin el outlier.
+```{r}
+datos.num.sin.outlier = datos.num[-clave.posible.outlier,]
+columna.sin.outlier = datos.num.sin.outlier[,indice.columna]
+#columna.sin.outlier
+```
+
+- **Forma 1: Visualizar histograma**
+```{r}
+ajusteNormal = fitdist(columna.sin.outlier , "norm")
+denscomp (ajusteNormal,  xlab = nombre.columna)
+```
+- **Forma 2: Visualizar el gráfico QQ**
+```{r}
+ggqqplot(columna.sin.outlier)
+```
+Con los dos gráficos anteriores observamos que, efectivamente, podemos aceptar que la distribución subyacente es una normal. Por tanto, como el test de Grubbs ha rechazado H0, aceptamos que el valor más alejado de la media (instancia 2) es un outlier.
+
+- **Forma 3: Aplicando un test de hipótesis**
+Test de hipótesis con H0: La distribución subyacente de la variable es una Normal. Si rechazamos H0, los datos no vienen de una normal. Aplicamos test de Shapiro-Wilk:
+
+```{r}
+shapiro.test(columna.sin.outlier)  
+```
+Como p<0.05, rechazamos H0 (columna NO compatible con una distrib normal, lo cual me resulta bastante curioso porque a simple vista sí lo parece...).
+
+### Construcción de una función propia
+Construimos una función con el nombre test_Grubbs que devuelva una lista con los cómputos anteriores. 
+```{r}
+# COMPLETAR
+
+#######################################################################
+# Aplica el test de Grubbs sobre la columna ind.col de datos y devuelve una lista con:
+#
+# nombre.columna: Nombre de la columna datos[, ind.col]
+# clave.mas.alejado.media: Clave del valor que está más alejado de la media
+# valor.mas.alejado.media: Valor de dicho elemento
+# nombre.mas.alejado.media: Nombre de la fila del elemento más alejado
+# es.outlier: TRUE/FALSE dependiendo del resultado del test de Grubbs
+# p.value: p-value calculado por el test de Grubbs
+# es.distrib.norm: Resultado del test de normalidad Shapiro-Wilk
+# p.value.test.normalidad: p-value del test de normalidad
+
+# Requiere el paquete "outliers" (library(outliers))
+#######################################################################
+
+test_Grubbs <- function(data.frame, indice.columna, alpha = 0.05) {
+  # Extraer la columna correspondiente
+  columna <- data.frame[, indice.columna]
+  
+  # Nombre de la columna
+  nombre.columna <- colnames(data.frame)[indice.columna]
+  
+  # Clave del valor más alejado de la media
+  clave.mas.alejado.media <- which.max(abs(columna - mean(columna)))
+  
+  # Valor del elemento más alejado de la media
+  valor.mas.alejado.media <- columna[clave.mas.alejado.media]
+  
+  # Nombre de la fila correspondiente al valor más alejado de la media
+  nombre.mas.alejado.media <- rownames(data.frame)[clave.mas.alejado.media]
+  
+  # Aplicar el test de Grubbs
+  test.Grubbs <- grubbs.test(columna, two.sided = TRUE)
+  es.outlier <- test.Grubbs$p.value < alpha
+  
+  # Eliminar el posible outlier de la columna
+  columna.sin.outlier <- columna[-clave.mas.alejado.media]
+  
+  # Test de normalidad (Shapiro-Wilk) sin el outlier
+  shapiro.result <- shapiro.test(columna.sin.outlier)
+  p.value.test.normalidad <- shapiro.result$p.value
+  es.distrib.norm <- p.value.test.normalidad > alpha
+  
+  # Devolver resultados en forma de lista
+  return(list(
+    nombre.columna = nombre.columna,
+    clave.mas.alejado.media = clave.mas.alejado.media,
+    valor.mas.alejado.media = valor.mas.alejado.media,
+    nombre.mas.alejado.media = nombre.mas.alejado.media,
+    es.outlier = es.outlier,
+    p.value = test.Grubbs$p.value,
+    p.value.test.normalidad = p.value.test.normalidad,
+    es.distrib.norm = es.distrib.norm
+  ))
+}
+```
+
+```{r}
+# Ejemplo de uso con datos.num y columna índice 1 ("mpg")
+test.Grubbs.con.funcion <- test_Grubbs(datos.num, indice.columna)
+test.Grubbs.con.funcion
+```
+Como no tenemos suficiente evidencia estadística de que la variable siga una distribución normal, no se cumple la condición para aplicar el Test de Grubbs y por tanto no podemos afirmar que la instancia 2 sea un outlier.
+
+## Trabajando con varias columnas
+Aplicamos lo anterior al resto de columnas.
+
+### Outliers IQR
+Calculamos los outliers IQR con respecto a cada una de las columnas (puede haber instancias repetidas).
+```{r}
+claves.outliers.IQR.en.alguna.columna =
+  claves_outliers_IQR_en_alguna_columna(datos.num, 1.5)
+
+claves.outliers.IQR.en.alguna.columna
+```
+Para devolver las intancias outlier sin duplicar:
+```{r}
+claves.outliers.IQR.en.mas.de.una.columna = 
+  unique(
+    claves.outliers.IQR.en.alguna.columna[
+      duplicated(claves.outliers.IQR.en.alguna.columna)])
+claves.outliers.IQR.en.alguna.columna = 
+  unique (claves.outliers.IQR.en.alguna.columna)
+
+claves.outliers.IQR.en.mas.de.una.columna
+
+claves.outliers.IQR.en.alguna.columna 
+
+nombres_filas(datos.num, claves.outliers.IQR.en.mas.de.una.columna)
+
+nombres_filas(datos.num, claves.outliers.IQR.en.alguna.columna)
+```
+Mostramos los valores normalizados de estos outlier:
+```{r}
+# COMPLETAR
+as.data.frame(datos.num.zscore[claves.outliers.IQR.en.alguna.columna,])
+```
+Para ver esta información de forma gráfica, usamos la función `diag_caja_puntos`:
+```{r}
+# COMPLETAR
+diag_cajas <- diag_caja_juntos(datos.num.zscore, titulo = "Outliers en alguna columna", claves.outliers.IQR.en.alguna.columna)
+diag_cajas + theme(axis.text.x = element_text(angle = 45, hjust = 1)) #Ponemos los nombres inclinados para que no se superpongan
+```
+Vemos que en total 77 instancias son candidatas a outliers, por tener valores extremos en alguna de las columnas.
+
+### Test de hipótesis (Opcional)
+
+Primero vemos qué variables se alejan de una normal:
+```{r}
+# COMPLETAR
+par(mfrow = c(2, 3))
+
+sapply(1:ncol(datos.num), function(i) {
+  ajusteNormal = fitdist(datos.num[, i] , "norm")
+  denscomp (ajusteNormal,  xlab = names(datos.num)[i])
+})
+```
+
+La variable `concavity_mean` es la que más se aleja de una normal, por lo que la vamos a suprimir del estudio.
+
+```{r}
+# COMPLETAR
+columnas.no.normales <- c("concavity_mean") #Columnas que se alejan de una normal
+
+datos.num.var.norm <- datos.num[, !(colnames(datos.num) %in% columnas.no.normales)]
+head(datos.num.var.norm)
+```
+
+Pasamos el test de Grubbs a todas las columnas.
+
+```{r}
+# COMPLETAR
+sapply(1:ncol(datos.num.var.norm), function(i){
+  test_Grubbs(datos.num.var.norm, i)})
+```
+Habiendo aplicado el test de normalidad, se rechazan todas las variables pues p-value<0.05, por lo que ninguna variable parece seguir una normal.
+Por otro lado, todos los outliers han sido etiquetados como tal.
+
+# Outliers Multivariantes
+
+## Métodos estadísticos basados en la distancia de Mahalanobis (OPCIONAL)
+El requisito para aplicar estas técnicas es que la distribución subyacente de los datos sea una normal multivariante. Si la distribución conjunta de las variables es una normal multivariante, entonces la variable 1-dimensional formada al calcular las distancias de Mahalanobis, sigue una distribución chi-cuadrado con k grados de libertad, siendo k el número de variables (columnas).
+
+### Comprobación de la normalidad usando gráficos QQ
+Los métodos basados en cuantiles calculan las distancias de Mahalanobis y ven si el gráfico QQ no se desvía demasiado de una $\chi^2$.
+```{r}
+cqplot(datos.num.var.norm , method = "classical")
+```
+Los datos se desvían demasiado de la línea de referencia, luego NO podemos afirmar que se verifique la hipótesis de normalidad. 
+
+### Comprobación de la normalidad usando un test de hipótesis
+La hipótesis nula planteada es H0:Los datos provienen de una distribución normal multivariante
+```{r}
+test.MVN = mvn(datos.num.var.norm, mvnTest = "energy")
+test.MVN$multivariateNormality["MVN"]
+test.MVN$multivariateNormality["p value"]
+```
+El test rechaza la hipótesis nula (p value < 0.05), por lo que no podemos asumir que tengamos una distribución normal multivariante. 
+
+**Conclusión:** por un lado, el gráfico QQ muestras claras desviaciones de la normalidad, y por otro lado, el test de hipótesis rechaza que los datos sigan una normal multivariante. Por tanto, los valores detectados NO tendrán ninguna garantía estadística de ser outliers.
+
+### Detección de outliers usando cuantiles
+```{r}
+dist.mah.clas = Mahalanobis(datos.num.var.norm, method = "classical")
+dist.mah.clas
+```
+
+Etiquetamos como outliers aquellos datos con una distancia de Mahalanobis por encima del cuantil 97.5. 
+```{r}
+# COMPLETAR
+cuantil_975= quantile(dist.mah.clas, 0.975)
+claves.outliers.mah.clas <- which(dist.mah.clas>cuantil_975)
+```
+
+```{r}
+claves.outliers.mah.clas
+nombres_filas (datos.num, claves.outliers.mah.clas)
+```
+Vemos que se repiten las instancias 1, 2 y 5 (como vimos en el punto 2.1.2).
+
+### Test de hipótesis para detectar outliers
+
+Establecemos H0:El valor más alejado del centro de la distribución no es un outlier (si se rechaza, es outlier). Considerando la distancia de Mahalanobis, se convierte en H0:El valor con mayor distancia de Mahalanobis al centro de la distribución viene de la misma distribución Normal multivariante que el resto de datos.
+
+Aplicamos el **test individual** con un valor de significación de 0.05 y el **test de intersección** con un valor de $$1-(1-0.05)^{1/n}$$ (n es el número de registros del conjunto de datos). Obtenemos las claves de los outliers encontrados por ambos métodos.
+
+```{r}
+# Establecemos la semilla
+set.seed(2)
+
+#test individual
+test.individual.Cerioli = cerioli2010.fsrmcd.test(datos.num.var.norm, signif.alpha = 0.05)
+son.posibles.outliers.individual.Cerioli = test.individual.Cerioli$outliers
+claves.test.individual = which (son.posibles.outliers.individual.Cerioli == TRUE)
+nombres.test.individual = nombres_filas(datos.num.var.norm, claves.test.individual)
+
+# test interseccion
+n = nrow(datos.num.var.norm)
+signif.interseccion = 1. - ((1. - 0.05)^(1./n))
+test.interseccion.Cerioli = cerioli2010.fsrmcd.test(datos.num.var.norm, signif.alpha = signif.interseccion)  
+son.posibles.outliers.Cerioli.interseccion = test.interseccion.Cerioli$outliers
+claves.test.interseccion = which (son.posibles.outliers.Cerioli.interseccion == TRUE)
+nombres.test.interseccion = nombres_filas(datos.num.var.norm, claves.test.interseccion)
+```
+
+```{r}
+claves.test.individual
+
+nombres.test.individual
+
+claves.test.interseccion
+
+nombres.test.interseccion
+
+```
+El test individual devuelve 98 outliers y el test de intersección 34 (es más conservador). Vimos antes que solo tenemos garantía estadística de que sea un outlier el que tiene mayor valor de distancia de Mahalanobis, que corresponde con la instancia 1.
+
+
+**Consideraciones finales**: 
+
+- No hemos podido afirmar que la distribución fuera normal multivariante, por lo que no tenemos garantía estadística de que el el outlier más alejado sea un outlier (de que provenga de una distribución distinta del resto de los datos), a pesar de que toma valores extremos en varias variables.
+
+
+## Visualización de datos con un Biplot
+
+```{r}
+biplot.outliers.IQR = biplot_2_colores(datos.num, 
+                                       claves.outliers.IQR.en.alguna.columna, 
+                                       titulo.grupo.a.mostrar = "Outliers IQR",
+                                       titulo ="Biplot Outliers IQR")
+biplot.outliers.IQR
+```
+La suma de los porcentajes explicados es ligeramente alta (20.5 + 41.4 = 61.9), por lo que la representación obtenida no parece ser mala aproximación. Puede apreciarse que las instancias 4 y 80 se encuentran en los valores más altos de un grupo de variables (no solo de una), al igual que la instancia 1.
+
+## Métodos basados en distancias: LOF
+Vamos a aplicar otros métodos que no ofrecen garantía estadística, pero son capaces de determinar cómo de alejado está cada punto al resto de los datos. Usaremos LOF. Como operamos con distancias, usamos los datos normalizados.
+```{r}
+num.vecinos.lof = 5
+lof.scores = LOF(dataset = datos.num.zscore, k = num.vecinos.lof)
+lof.scores
+```
+
+La función LOF asigna un score a cada dato, indicando hasta qué punto es un outlier. 
+
+```{r}
+# COMPLETAR
+lof.scores.ordenados <- order(lof.scores, decreasing = TRUE)
+#lof.scores.ordenados
+#lof.scores[lof.scores.ordenados]
+plot(1:length(lof.scores), lof.scores[lof.scores.ordenados], xlab="index", ylab="LOF scores ordenados")
+```
+Podemos apreciar que hay un grupo de unos 10 valores con scores más altos que el resto de datos. Vamos a analizar dichos valores. Establecemos la variable num.outliers en 8 y obtenemos sus claves junto con sus nombres.
+
+```{r}
+# COMPLETAR
+num.outliers=10
+claves.outliers.lof <- lof.scores.ordenados[1:num.outliers]
+nombres.outliers.lof <- nombres_filas (datos.num.zscore, claves.outliers.lof)
+```
+
+```{r}
+claves.outliers.lof
+nombres.outliers.lof
+```
+Mostramos también los valores normalizados de dichos registros:
+```{r}
+datos.num.zscore[claves.outliers.lof, ]
+```
+Viendo estos datos, la mayoría de instancias toman un score alto porque toman valores extremos en más de una variable (y por tanto, son puntos alejados del resto de forma multivariante). Posteriormente analizaremos con más detalle esta cuestión. 
+
+Por ahora, vamos a analizar el registro que tiene el mayor score en LOF. Corresponde al registro 154. Podemos apreciar que tiene un valores extremos en varias variables (en `symmetry_mean `, `smoothness_se`).
+
+Vamos a empezar viendo las posibles interacciones de dos variables. Para ello, mostramos los diagramas de dispersión corespondientes a los cruces 2 a 2 de las variables, mostrando en rojo el outlier con mayor score en LOF (registro 154).
+
+```{r}
+clave.max.outlier.lof = claves.outliers.lof[1]
+
+colores = rep("black", times = nrow(datos.num.zscore))
+colores[clave.max.outlier.lof] = "red"
+pairs(datos.num.zscore, pch = 19,  cex = 0.5, col = colores, lower.panel = NULL)
+```
+Hay una correlación directa entre `compactness_mean`, `concavity_mean` y `concave_points_mean`, aunque el valor 154 se sitúa en zonas de alta densidad (no es outlier ahí), pero sí que se encuentra ligeramente aislado con respecto a los demás puntos (en los bordes de las regiones de alta densidad). 
+Entre `radius_mean` y `simmetry_mean`, no hay correlación, pero el outlier se sitúa ahora sí en una zona aislada. Esta tendencia puede ser la que ha hecho que la instancia 154 haya obtenido un score tan alto en LOF.
+
+Procedemos a ver la interacción de todas las variables (no sólo 2 a 2), con un biplot:
+```{r}
+biplot.max.outlier.lof = biplot_2_colores(datos.num.zscore, clave.max.outlier.lof, titulo = "Mayor outlier LOF")
+biplot.max.outlier.lof
+```
+La suma de la variabilidad explicada por las dos componentes principales es medianamente alta (un 60%) y por tanto la aproximación es buena.
+
+Observamos nuestro outlier en la parte central del diagrama, ligeramente alejado de la nube central de puntos, pero no completamente aislado como cabría esperar. De hecho, se encuentra en una zona de bastante alta densidad. Por tanto, esta instancia no parece tener las características de un outlier. 
+
+
+## Métodos basados en Clustering
+### Clustering usando k-means
+Fijamos 5 outliers y 3 centroides.
+```{r}
+num.outliers = 5
+num.clusters = 3
+set.seed(2)
+```
+
+Construimos el modelo kmeans:
+```{r}
+# COMPLETAR
+modelo.kmeans <- kmeans(datos.num.zscore , num.clusters)
+modelo.kmeans
+```
+
+```{r}
+# COMPLETAR
+asignaciones.clustering.kmeans <- modelo.kmeans$cluster
+centroides.normalizados <- modelo.kmeans$centers
+```
+
+```{r}
+head(asignaciones.clustering.kmeans)
+
+centroides.normalizados
+```
+Si queremos los centroides sin normalizar:
+```{r}
+centroides.desnormalizados = desnormaliza(datos.num, centroides.normalizados)
+centroides.desnormalizados
+```
+Calculamos los outliers como aquellos datos que más se alejan del centroide del cluster al que ha sido asignado.
+```{r}
+# COMPLETAR
+#######################################################################
+# Calcula las distancias de los datos a los centroides
+# y se queda con los primeros (tantos como indica num.outliers)
+# Devuelve una lista con las claves de dichos registros y las
+# correspondientes distancias a sus centroides
+ 
+top_clustering_outliers = function(datos.normalizados, 
+                                   asignaciones.clustering, 
+                                   datos.centroides.normalizados, 
+                                   num.outliers){
+  distancias<- distancias_a_centroides(datos.normalizados, asignaciones.clustering, datos.centroides.normalizados)
+  distancias.ordenadas <- order(distancias, decreasing = TRUE)
+  claves <- distancias.ordenadas[1:num.outliers]
+  list(distancias, claves)
+}
+```
+
+Para elegir el número de outliers, seguimos el mismo procedimiento que se realizó con LOF, representamos todas las filas:
+```{r}
+# COMPLETAR
+todos_outliers<- top_clustering_outliers(datos.num.zscore, asignaciones.clustering.kmeans, centroides.normalizados, nrow(datos.num.zscore))
+```
+
+```{r}
+plot(1:nrow(datos.num.zscore), todos_outliers[[1]][todos_outliers[[2]]], xlab="index", ylab="distancias outliers centroides")
+```
+Según la gráfica obtenida, sería sensato elegir 2 como primera opción para la variable num.outliers. En cualquier caso, vamos a usar 5 para comparar con los resultados obtenidos en LOF.
+```{r}
+distancias.outliers.centroides<- top_clustering_outliers(datos.num.zscore, asignaciones.clustering.kmeans, centroides.normalizados, num.outliers)
+claves.outliers.kmeans <- distancias.outliers.centroides[[2]]
+claves.outliers.kmeans
+```
+
+Vamos a mostrar un biplot con la información de los outliers y de los clusters.
+```{r}
+biplot_outliers_clustering(datos.num, 
+                           titulo = "Outliers k-means",
+                           asignaciones.clustering = asignaciones.clustering.kmeans,
+                           claves.outliers = claves.outliers.kmeans)
+```
+
+Podemos apreciar que cuatro de los cinco outliers detectados por este método están en el exterior de la nube de puntos, por lo que es muy posible que se hayan etiquetado como outliers porque tienen un valor muy alto en una o varias variables. Estas instancias son 1, 3, 5 y 80. Los registros 1, 3 y 5 ya los conocíamos porque eran outliers con respecto a 1 columna. Ahora han aparecido dos nuevos: 80 y 319.
+
+Veamos el diagrama de cajas conjunto para hacernos una idea de los valores que toman:
+```{r}
+diag_caja_juntos(datos.num, "Outliers k-means", claves.outliers.kmeans) + theme(axis.text.x = element_text(angle = 45, hjust = 1)) #Ponemos los nombres inclinados para que no se superpongan
+```
+Parece ser que, efectivamente, los registros 80 y 319 han sido etiquetados como outliers porque tienen valores algo extremos (sin llegar a ser muy extremos) en varias variables, y tienen un valor muy extremo en una variable concreta (en este caso, en `fractal_dimension_mean`), por lo que la suma de los efectos de dichas variables (de forma individual) han podido determinar que tengan scores altos. 
+
+Por ejemplo, la instancia 1 tiene valores algo extremos en la mitad de variables.
+El registro que menos valores extremos posee es 5, pues solo destaca en la variable `radius_mean`, y no está tan alejado de la nube de puntos en el biplot. El diagrama de cajas también muestra que, efectivamente, no tiene un valores extremos en varias variables. 
+
+### Clustering usando medoides (OPCIONAL)
+En este apartado vamos a usar el método de clustering PAM (Partition around medoids):
+```{r}
+set.seed(2)
+matriz.distancias = dist(datos.num.zscore)
+modelo.pam        = pam(matriz.distancias , k = num.clusters)
+```
+
+```{r}
+asignaciones.clustering.pam = modelo.pam$clustering   
+nombres.medoides = modelo.pam$medoids    
+medoides = datos.num[nombres.medoides, ]
+medoides.normalizados = datos.num.zscore[nombres.medoides, ]
+
+nombres.medoides
+
+medoides
+
+medoides.normalizados
+```
+Calculamos ahora los top outliers. 
+```{r}
+# COMPLETAR
+distancias.outliers.medoides<- top_clustering_outliers(datos.num.zscore, asignaciones.clustering.pam, medoides.normalizados, num.outliers)
+claves.outliers.pam <- distancias.outliers.medoides[[2]]
+nombres.outliers.pam <- names(distancias.outliers.medoides[[1]][claves.outliers.pam])
+```
+
+```{r}
+claves.outliers.pam
+
+nombres.outliers.pam
+```
+
+```{r}
+biplot_outliers_clustering(datos.num, 
+                           titulo = "Outliers PAM",
+                           asignaciones.clustering = asignaciones.clustering.pam,
+                           claves.outliers = claves.outliers.pam)
+```
+
+Al usar la partición creada por pam, los outliers encontrados corresponden a registros que están en la periferia del biplot, es decir que son outliers porque tienen un valor extremo en alguna de las variables y no tanto porque tengan una combinación anómala de valores en distintas variables.
+
+## Análisis de los outliers multivariantes puros
+
+Los outliers multivariantes puros son aquellos que no son outliers con respecto a una única variable, si no con respecto a varias. 
+Ya hemos detectado varios de estos outliers en apartados anteriores. Por ejemplo, los registros 1, 3, y 5 han sido identificados como outliers por k-means por presentar valores extremos en varias variables. Por otro lado, los registros 1 y 3 fueron identificados por LOF como outliers por estar en zonas de muy baja densidad (aislados del resto de valores). Otros ejemplos, como 318 y 319 han sido clasificados como outliers por tener un valor extremo en una variable.
+
+Vamos a automatizar la identificación de outliers puros (restando los outliers en alguna columna obtenidos mediante el método IQR):
+```{r}
+# COMPLETAR
+claves.outliers.lof.no.IQR <- setdiff(claves.outliers.lof, claves.outliers.IQR.en.alguna.columna)
+nombres.outliers.lof.no.IQR <- nombres_filas(datos.num, claves.outliers.lof.no.IQR)
+```
+
+```{r}
+claves.outliers.IQR.en.alguna.columna
+
+claves.outliers.lof
+
+claves.outliers.lof.no.IQR
+
+nombres.outliers.lof.no.IQR
+```
+Antes habíamos visto en la gráfica de scores LOF que había un grupo de 3 registros con un score muy alto, y unos 7-8 registros con scores notablemente superiores al resto. Estos eran los registros 154, 310, 156, 84, 344, 319, 1, 31, 105 y 3. 
+Analizamos de nuevo los resultados del método LOF aumentando el número total de outliers a 10. Calcularemos los registros que son outliers LOF pero no 1-variantes. 
+```{r}
+# COMPLETAR
+num.outliers=10
+claves.outliers.lof <- lof.scores.ordenados[1:num.outliers]
+claves.outliers.lof.no.IQR <- setdiff(claves.outliers.lof, claves.outliers.IQR.en.alguna.columna)
+nombres.outliers.lof.no.IQR <- nombres_filas(datos.num, claves.outliers.lof.no.IQR)
+```
+
+```{r}
+claves.outliers.IQR.en.alguna.columna
+
+claves.outliers.lof
+
+claves.outliers.lof.no.IQR
+
+nombres.outliers.lof.no.IQR
+```
+Mostramos el biplot de los outliers puros:
+```{r}
+biplot.outliers.lof.no.IQR <- biplot_2_colores(datos.num, claves.outliers.lof.no.IQR, titulo="Outliers LOF (excluidos los que no son IQR)")
+biplot.outliers.lof.no.IQR
+```
+
+El registro 105 parece haber sido seleccionado por presentar un valor alto en `texture_mean` y muy bajo en `concavity_mean` y `radius_se`, por lo que posiblemente el efecto sumado de estas variables haya contribuido a su alto score. El registro 84 parece tomar un valor alto en `radius_mean` y bajo en `smoothness_se`.
+Nos fijamos en el registro 272, que no parece tener un valor extremo en ninguna variaable, pues se sitúa en la zona central del biplot, de hecho en una zona de dispersión media.
+
+Veamos los datos normalizados:
+```{r}
+datos.num.zscore[claves.outliers.lof.no.IQR, ]
+```
+Observamos que el valor de 105 en `texture_mean` es de hecho cercano a cero, y toma valores bajos en en `smoothness_se`, `compactness_mean` y `smoothness_mean`. El registro 272 toma un valor bastante extremo en `symmetry_mean`, pero valores normales en las demás variables.  
+Concluimos que 105 y 84 son valores anómalos puros por tomar valores extremos en varias variables, pero 272 no lo es tanto.
+
+# Resumen final
+
+## Metodología
+
+**Objetivo.** El objetivo del trabajo ha sido detectar outliers en un conjunto de datos de cáncer de mama. Asumimos que los datos no contienen errores de medición, por lo que el análisis se centra en identificar valores inusuales que aporten información relevante para la clasificación de tumores malignos y benignos. Para ello, se han utilizado técnicas 1-variantes (técnicas para encontrar datos con valores extremos con respecto a una única variable) y técnicas multivariantes (para encontrar datos con combinaciones anómalas de dos o más variables).
+
+**Preparación de datos.** Inicialmente, hemos seleccionado únicamente las variables numéricas del dataset. Se eliminaron aquellas variables con baja variabilidad y se imputaron valores faltantes, si era necesario. También se realizó una normalización de los datos mediante el método z-score para estandarizar las escalas de las variables. Finalmente, eliminamos variables altamente correlacionadas para reducir la dimensionalidad y evitar redundancias.
+
+**Procedimientos aplicados.** El análisis se dividió en técnicas univariantes y multivariantes:
+
+1. **Análisis univariante**
+    - **Método IQR:** Identificamos outliers en cada variable basándonos en el rango intercuartil. Los resultados se han representado mediante diagramas de caja para facilitar la visualización y el análisis. Vemos qué registros toman valores alejados de la media.
+    - **Test de hipótesis:** Aplicamos el test de Grubbs para confirmar estadísticamente si los valores más alejados de la media eran outliers. El test tiene como hipótesis nula que los valores más extremos no son outliers. 
+Este test exige que la variable siga una distribución normal, por lo que tuvimos que realizar un análisis de normalidad para validar los supuestos requeridos. Para confirmar este supuesto, hemos realizado tests de normalidad como Shapiro-Wilk. En aquellos casos donde la normalidad no ha sido rechazada, el test de Grubbs puede proporcionar información relevante para identificar outliers con evidencia estadística. En los casos donde se ha rechazado la normalidad, hemos interpretado los resultados del test con cierta cautela.
+    - **Visualización:** Generamos gráficos para observar cómo se distribuyen los valores de las variables y los outliers detectados (diagramas de caja, biplots...).
+
+2. **Análisis multivariante**
+    - **Métodos estadísticos:** hemos utilizado la distancia de Mahalanobis para detectar outliers multivariantes en un conjunto reducido de variables clave. Este método, basado en una distribución multivariante normal, asigna puntuaciones a los registros en función de su distancia al centroide del grupo de datos. Para validar los resultados, hemos verificado previamente si las variables seleccionadas cumplían con el supuesto de normalidad multivariante.
+    - **Métodos basados en densidad (LOF):**  este método evalúa la densidad local de cada registro en comparación con sus vecinos. Los registros con puntuaciones altas de LOF se han etiquetado como outliers, ya que se encontraban en regiones de baja densidad del espacio multivariado. Este método ha sido útil para identificar registros aislados que no necesariamente presentaban valores extremos en variables individuales, pero sí en combinaciones específicas de ellas.
+    - **Métodos basados en clustering:** Hemos aplicado el algoritmo de k-means para agrupar los datos en clústeres y detectar registros que se encontraban significativamente alejados de los centroides de sus respectivos clústeres. Estos registros se han considerado como outliers potenciales. El análisis de los clústeres nos ha permitido interpretar los patrones generales de los datos y ha destacado registros con combinaciones inusuales de características.
+  - En una etapa final, hemos explorado los **outliers multivariantes puros**, que aunque no han sido etiquetados como outliers univariantes, presentaban combinaciones de valores inusuales en varias variables. Este tipo de outliers es relevante porque reflejan casos en los que los registros no destacan en un único aspecto, sino en una combinación única de características. Asimismo, hemos detectado registros que, si bien tenían valores extremos en una única variable, su impacto en el análisis multivariante era menor.
+
+
+## Análisis de resultados
+
+**Conjunto de datos.** El dataset original contenía 31 variables relacionadas con características de los tumores (como dimensiones, textura, compactación, entre otras), de las cuales hemos seleccionado una representación reducida tras identificar grupos de variables altamente correlacionadas (por ejemplo, `radius_mean`, `radius_worst`, y `radius_se` han sido representadas únicamente por `radius_mean`). Esta selección inicial nos ha facilitado la interpretación de los resultados.
+
+Además, antes de aplicar los procedimientos, se han normalizado las variables numéricas mediante el método z-score para poder realizar comparaciones entre ellas, dado que tienen escalas distintas.
+
+
+**Resultados univariantes.** 
+Estudiamos los datos con respecto a sus valores en la primera variable: `radius_mean`.
+
+- **Método IQR:** El análisis basado en el rango intercuartil ha identificado varios registros como valores extremos. Por ejemplo, el registro 2, correspondiente a un tumor con valores muy altos en `radius_mean` y `texture_mean` ha sido clasificado como un outlier extremo. Por otro lado, las instancias 1,3,5,7,46 y 310, aunque también tienen valores altos en las mismas variables no llegaron a clasificarse como outliers extremos.
+Los diagramas de caja nos han permitido destacar registros específicos. Por ejemplo, el tumor 2, con un valor extremadamente alto en `radius_mean`, resalta significativamente en su respectivo diagrama de caja, sugiriendo un posible tumor maligno con una extensión inusualmente grande.
+
+- **Test de hipótesis:**  
+Para validar estadísticamente los outliers identificados mediante IQR, hemos aplicado el test de Grubbs a cada variable. Sin embargo, debido a que ninguna variable cumple el supuesto de normalidad (según el test de Shapiro-Wilk), los resultados del test de Grubbs deben interpretarse con precaución. No obstante, todos los outliers fueron detectados como tal por el test de Grubbs. Estos outliers fueron 2, 124, 318, 4, 1 y 24.
+
+
+
+**Resultados multivariantes.**
+
+- **Visualización con biplot:** La suma de los porcentajes explicados es muy alta, explicando el 60% de la varianza acumulada, lo que ha permitido visualizar los registros en un espacio bidimensional. Hay registros claramente visibles en los extremos del biplot, como 1, 3, 5, 2, 7, 310, 4, 80...
+
+- **Métodos estadísticos usando la distancia de Mahalanobis:** La distribución conjunta de las variables no es una normal multivariante. Por lo tanto, no deberíamos aplicar el método basado en la distancia de Mahalanobis. No obstante, lo hemos aplicado para ver si nos proporcionaba información relevante. Vimos que
+solo tenemos garantía estadística de que sea un outlier el que tiene mayor valor de distancia de Mahalanobis, que corresponde con la instancia 1. Este registro ya fue previamente etiquetado como outlier 1-variante en dos casos (variables `concave_points_mean` y `radius_se`) por el test de Grubbs. De todas formas, al no haber podido demostrar que la distribución sea normal multivariante, no podemos concluir con garantía estadística que sea outlier.
+
+- **LOF:** El método LOF, basado en la densidad local, ha detectado registros interesantes que podrían ser indicadores de tumores malignos (al encontrarse aislados de los demás datos). Por ejemplo, el ejemplo 154 fue el ejemplo con score más alto detectado en una región de baja densidad, por tener valores muy elevados en `smoothness_mean` y `symmetry_mean`. Otros registros destacables son 1 y 3, que ya los habíamos detectado como posibles outliers en otros apartados, con valores muy altos en `radius_mean` y `concave_points_mean`. En definitiva, el radio del tumor y su simetría parecen ser variables bastante determinantes a la hora de clasificar un tumor como outlier.
+
+- **Métodos basados en clustering:** Los registros más alejados de los centroides indican posibles anomalías. Algos ejemplos a destacar al aplicar k-means son: 1, 80, 319, 3, 5. De estos, los que se encuentran más alejados de los clusters formados son 1, 3 y 5.
+Posteriormente, al aplicar clustering PAM, destacaron los registros 1, 80, 4, 219 y 318, que fueron clasificados como outliers porque tienen un valor extremo en alguna de las variables y no tanto porque tengan una combinación anómala de valores en distintas variables.
+
+
+- **Análisis de los outliers multivariantes puros:** excluyendo los registros con altos scores en LOF que no toman valores altos en alguna variable por separado, nos hemos quedado con los registros 105 y 84, que son valores anómalos puros por tomar valores extremos en varias variables.
+
+
+**Conclusión**
+
+El análisis de los datos de cáncer de mama nos ha permitido identificar posibles outliers mediante técnicas tanto univariantes como multivariantes. En el análisis univariante, registros como el 1, 2, y 3 han destacado por valores excepcionalmente altos en variables como `radius_mean` y `texture_mean`, sugiriendo posibles tumores malignos debido a características como el tamaño y la textura de los tejidos. El método IQR ha identificado estos registros como valores extremos, y aunque el test de Grubbs confirmó algunos de ellos como outliers estadísticos, las pruebas de normalidad indican que no podemos afirmar que lo son. 
+
+Por otro lado, en el análisis multivariante, los biplots nos han permitido reducir la dimensionalidad y observar patrones claros, destacando registros como el 1, 3 y 5 en el biplot, con combinaciones únicas de valores que los separan del resto. Métodos basados en densidad, como LOF, han detectado registros como el 1, 3 y el 154, que se encontraban en regiones de baja densidad, lo que refuerza la hipótesis de que representan tumores con características atípicas. Asimismo, los algoritmos de clustering, como k-means, identificaron registros como el 1, 3, 4 y 5, alejados de los centroides. Finalmente, los análisis de outliers multivariantes puros destacaron registros como el 105 y 84, que, aunque no presentaban valores extremos en una única variable, mostraban combinaciones inusuales en múltiples dimensiones. 
+En conjunto, estos resultados señalan una tendencia a identificar los outliers que los registros del 1 al 10, que de hecho son los outliers reales, ya que presentan características que los separan del comportamiento típico de los tumores analizados.
